@@ -68,7 +68,7 @@ void delay(uint16_t a)
 
 int getGPIO(int cual)
 {
-	int como=0;
+	volatile int como=0;
 
 	for (int a=0;a<4;a++)
 	{
@@ -1233,6 +1233,7 @@ int init_log()
 		bitacora = fopen("/spiflash/log.txt", "a");
 		if(bitacora==NULL)
 		{
+			perror("Error Open append");
 			if(aqui.traceflag&(1<<BOOTD))
 			printf("[BOOTD]Could not open file\n");
 			return -1;
@@ -1552,8 +1553,8 @@ void virtualMachine(void* arg)
 		printf("[DOORD]Starting controller. State %d\n",stateVM);
 
 	//get initial state of switches
-	int closeb=gpio_get_level(CLOSESW);
-	int openb=gpio_get_level(OPENSW);
+	volatile int closeb=gpio_get_level(CLOSESW);
+	volatile int openb=gpio_get_level(OPENSW);
 
 	if(closeb==false && openb==false)
 		hardwareError(); //both ON is a hardware error and will not be able to function. STOP
@@ -1712,6 +1713,7 @@ void app_main(void)
 		printf("Error opening NVS File\n");
 	else
 		printf("NVS Config open\n");
+
 
 	tcpip_adapter_init();
 	gpio_set_direction((gpio_num_t)0, GPIO_MODE_INPUT);
