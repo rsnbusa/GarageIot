@@ -1513,7 +1513,7 @@ void openedToClosing()
 			printf("[DOORD]Opened to Closing\n");
 		gpio_set_level(LASER, LASERON);
 		lastGRelay=0;
-		xSemaphoreTake(args[2].mimutex,100); // used to clear a prevoius Action. Sort of debouncing
+//		xSemaphoreTake(args[2].mimutex,100); // used to clear a prevoius Action. Sort of debouncing
 		xTaskCreate(&gClosingBreak,"cbreak",4096,&args[2],MGOS_TASK_PRIORITY, &cBHandle); //Close Break manager
 	}
 }
