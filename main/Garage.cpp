@@ -527,6 +527,13 @@ void gCloseBreak(argumento *args)
 	if(!breakf) //If not sent the WBREAK command, start timer else wait forever for a break
 				printf("Failed to start WBREAK\n");
 	breakf=false; //just once
+	while(1) //Need to see the laser first
+	{
+		if(!gpio_get_level(LASERSW))
+			delay(100);
+		else
+			break;
+	}
 	while(FOREVER)
 		{
 			if(args->mimutex)
@@ -1466,6 +1473,14 @@ void openingToOpened()
 				xTimerStop(openTimer,0);
 		if(guardfopen)  //Break during the opening phase, do not wait for the wbreak
 			{
+			//must check that we have a guard signal or else its blocked and need to wait
+			while(1)  //should put a counter to time out
+			{
+				if(!gpio_get_level(LASERSW))
+					delay(100);
+				else
+					break;
+			}
 				guardfopen=false;
 				displayTimeSequence(aqui.wait/2);
 				if(!gpio_get_level(OPENSW)) //Not already closing
