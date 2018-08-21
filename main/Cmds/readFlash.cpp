@@ -81,8 +81,8 @@ void show_config( u8 meter, bool full) // read flash and if HOW display Status m
 		}
 
 		printf("[DispMgrTimer %d]\n",aqui.DISPTIME);
-		printf("Opens %d Stucks %d Guards %d Aborted %d last %s ms:%d Guard:%s Auto:%s waitBreak:%s\n",aqui.opens,aqui.stucks,aqui.guards,aqui.aborted,
-				makeDateString(aqui.lastOpen).c_str(),aqui.elapsedCycle,gGuard?"On":"Off",aqui.sendMqtt?"On":"Off",aqui.waitBreak?"On":"Off");
+		printf("Opens %d Stucks %d Guards %d Aborted %d last %s ms:%d Guard:%s wGuard:%s Auto:%s waitBreak:%s\n",aqui.opens,aqui.stucks,aqui.guards,aqui.aborted,
+				makeDateString(aqui.lastOpen).c_str(),aqui.elapsedCycle,aqui.guardOn?"On":"Off",gGuard?"On":"Off",aqui.sendMqtt?"On":"Off",aqui.waitBreak?"On":"Off");
 
 		printf("Timers Relay %d Wait %d Sleep %d openTO %d CloseTO %d Menos %d AvgOpen %d Motor %d\n",aqui.relay,aqui.wait,aqui.sleepTime,
 				aqui.openTimeout,aqui.closeTimeout,aqui.menos,aqui.countCycles>0?aqui.totalCycles/aqui.countCycles:0,aqui.motorw);
@@ -91,10 +91,10 @@ void show_config( u8 meter, bool full) // read flash and if HOW display Status m
 			{
 			printf("Trace Flags ");
 
-						for (int a=0;a<NKEYS;a++)
+						for (int a=0;a<NKEYS/2;a++)
 							if (aqui.traceflag & (1<<a))
 							{
-								if(a<NKEYS-1)
+								if(a<NKEYS/2-1)
 									printf("%s-",lookuptable[a].key);
 								else
 									printf("%s",lookuptable[a].key);

@@ -398,8 +398,9 @@ static void IRAM_ATTR gpio_isr_handler(interrupt_type* arg)
 	if(!aqui.working)
 		return; //Nothing happening
 
-	if(arg->mimutex && arg->pin==LASERSW)
+	if(arg->mimutex && arg->pin==LASERSW && (millis()-arg->timestamp)>MINLASER)
 	{
+		arg->timestamp=millis();
 		args[2].timinter=0; //Wake LaserManager with Option 0 (standard laser break)
 		xSemaphoreGiveFromISR(arg->mimutex, &tasker );
 		if (tasker)
@@ -445,6 +446,7 @@ void gOpeningBreak(argumento *args)
 							drawString(GUARDX,GUARDY, "G", 10, TEXT_ALIGN_LEFT,DISPLAYIT, REPLACE);
 							xSemaphoreGive(I2CSem);
 						}
+			//		gpio_isr_handler_remove(LASERSW);
 					oBHandle=NULL;
 					vTaskDelete(NULL); // ONE signal is enough . Now just die
 				}
@@ -482,6 +484,9 @@ void gClosingBreak(argumento *args)
 			xSemaphoreGive(I2CSem);
 		}
 
+	gpio_isr_handler_remove(LASERSW);
+	gpio_isr_handler_add(LASERSW, (gpio_isr_t)gpio_isr_handler, &lasert);
+	xSemaphoreTake(args->mimutex, 100);
 	while(FOREVER)
 		{
 			if(args->mimutex)
@@ -506,8 +511,11 @@ void gClosingBreak(argumento *args)
 						cBHandle=NULL;
 						vTaskDelete(NULL);
 					}
+
 					relay(stateVM);
 					guardfopen=false; //Reset flag and wait for break again and or timeout
+					printf("cBHandle null\n");
+					cBHandle=NULL;
 					vTaskDelete(NULL);
 				}
 			}
@@ -517,6 +525,7 @@ void gClosingBreak(argumento *args)
 
 void gCloseBreak(argumento *args)
 { // wait for BREAK or Timeout Break
+u32 started;
 
 	if(xSemaphoreTake(I2CSem, portMAX_DELAY))
 		{
@@ -525,15 +534,14 @@ void gCloseBreak(argumento *args)
 			xSemaphoreGive(I2CSem);
 		}
 	if(!breakf) //If not sent the WBREAK command, start timer else wait forever for a break
-				printf("Failed to start WBREAK\n");
-	breakf=false; //just once
-	while(1) //Need to see the laser first
 	{
-		if(!gpio_get_level(LASERSW))
-			delay(100);
-		else
-			break;
+		if( xTimerIsTimerActive( closeTimer ) != pdFALSE )
+			xTimerStop(closeTimer,0);
+			if(xTimerStart(closeTimer,0) ==pdFALSE)
+				printf("Failed to start closetimer\n");
 	}
+	breakf=false; //just once
+
 	while(FOREVER)
 		{
 			if(args->mimutex)
@@ -543,8 +551,23 @@ void gCloseBreak(argumento *args)
 				{
 					if(aqui.traceflag & (1<<DOORD))
 						printf("[DOORD]Close break activated\n");
-					if(!args->timinter) //Not activated by the timer so display the time, else close it
+
+					if(!args->timinter){ //Not activated by the timer so display the time, else close it
+						started=millis();
+
+						while(1) //Need to see the laser first
+						{
+							if(millis()-started>aqui.sleepTime)
+								break; //too long. something is wrong
+							if(!gpio_get_level(LASERSW))
+								delay(100);
+							else
+								break;
+						}
 						displayTimeSequence(aqui.wait);
+					}
+
+
 					if(!gpio_get_level(OPENSW)) //Not already closing
 						relay(stateVM);
 					guardfopen=false; //Reset flag and wait for break again and or timeout
@@ -906,7 +929,7 @@ void initI2C()
 	i2cp.sdaport=(gpio_num_t)SDAW;
 	i2cp.sclport=(gpio_num_t)SCLW;
 	i2cp.i2cport=I2C_NUM_0;
-	miI2C.init(i2cp.i2cport,i2cp.sdaport,i2cp.sclport,400000,&I2CSem);//Will reserve a Semaphore for Control
+	miI2C.init(i2cp.i2cport,i2cp.sdaport,i2cp.sclport,700000,&I2CSem);//Will reserve a Semaphore for Control
 }
 
 esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
@@ -1075,25 +1098,16 @@ void initVars()
 	strcpy(lookuptable[9].key,"DOORD");
 	strcpy(lookuptable[10].key,"MQTTT");
 	strcpy(lookuptable[11].key,"HEAPD");
+	strcpy(lookuptable[12].key,"GUARDD");
 
-	strcpy(lookuptable[12].key,"-BOOTD");
-	strcpy(lookuptable[13].key,"-WIFID");
-	strcpy(lookuptable[14].key,"-MQTTD");
-	strcpy(lookuptable[15].key,"-PUBSUBD");
-	strcpy(lookuptable[16].key,"-MONGOOSED");
-	strcpy(lookuptable[17].key,"-CMDD");
-	strcpy(lookuptable[18].key,"-WEBD");
-	strcpy(lookuptable[19].key,"-GEND");
-	strcpy(lookuptable[20].key,"-LASERD");
-	strcpy(lookuptable[21].key,"-DOORD");
-	strcpy(lookuptable[22].key,"-MQTTT");
-	strcpy(lookuptable[23].key,"-HEAPD");
-
-	for (int a=0;a<NKEYS;a++)
-		if(a<(NKEYS/2))
-			lookuptable[a].val=a;
-		else
-			lookuptable[a].val=a*-1;
+	for (int a=0;a<(NKEYS/2);a++)
+	{
+		strcpy(text,"-");
+		strncat(text,lookuptable[a].key,strlen(lookuptable[a].key));
+		strcpy(lookuptable[a+NKEYS/2].key,text);
+		lookuptable[a].val=a;
+		lookuptable[a+NKEYS/2].val=(a+NKEYS/2)*-1;
+	}
 
 	//Set up Mqtt Variables
 	spublishTopic=string(APP)+"/"+string(aqui.groupName)+"/"+string(aqui.meterName)+"/MSG";
@@ -1317,7 +1331,7 @@ void closeToOpening()
 
 	gwait=aqui.wait;
 
-	if(gGuard)
+	if(gGuard) //global flag that allows us to use the laser beam as a guard or trigger
 	{
 		aqui.waitBreak=1;
 		guardfopen=guardf=false;
@@ -1325,7 +1339,7 @@ void closeToOpening()
 		gpio_set_level(LASER, LASERON);
 		delay(200);
 		gpio_isr_handler_add(LASERSW, (gpio_isr_t)gpio_isr_handler, &lasert);
-		xSemaphoreTake(args[2].mimutex,100); // used to clear a prevoius Action. Sort of debouncing
+		xSemaphoreTake(args[2].mimutex,100); // used to clear a previous Action. Sort of de-bouncing
 		xTaskCreate(&gOpeningBreak,"obreak",4096,&args[2],  MGOS_TASK_PRIORITY, &oBHandle);
 	}
 	stateVM=OPENING;
@@ -1345,12 +1359,16 @@ void closingToClose()
 			xTimerStop(closeTimer,0);
 
 	gMotorMonitor=false;
-	if(cBHandle){
-		vTaskDelete(cBHandle);
-		cBHandle=NULL;
+	if(gGuard)
+	{
+		if(cBHandle){
+			vTaskDelete(cBHandle);
+			cBHandle=NULL;
+		}
+		gpio_isr_handler_remove(LASERSW);
+		gpio_set_level(LASER, LASEROFF);
 	}
-	gpio_isr_handler_remove(LASERSW);
-	gpio_set_level(LASER, LASEROFF);
+
 	if(aqui.traceflag & (1<<DOORD))
 		printf("[DOORD]ClosingToClose\n");
 	guardf=false;
@@ -1403,11 +1421,12 @@ void openingToClosed()
 			gpio_isr_handler_remove(LASERSW);
 			gpio_set_level(LASER, LASEROFF);
 			guardfopen=guardf=false;
-		}
-		if(oBHandle){
-			vTaskDelete(oBHandle);
+			if(oBHandle){
+				vTaskDelete(oBHandle);
 			oBHandle=NULL;
+			}
 		}
+
 		stateVM=CLOSED;
 		sendState();
 	}
@@ -1425,7 +1444,7 @@ void displayTimeSequence(int cuantos)
 		son=5;
 	for(int a=0;a<son;a++)
 	{
-		if(xSemaphoreTake(I2CSem, 300))
+		if(xSemaphoreTake(I2CSem, portMAX_DELAY))
 		{
 			if((gpio_get_level(OPENSW) ) && a>2)
 			{
@@ -1440,7 +1459,7 @@ void displayTimeSequence(int cuantos)
 		}
 		delay(1000);
 	}
-	if(xSemaphoreTake(I2CSem, 300))
+	if(xSemaphoreTake(I2CSem, portMAX_DELAY))
 	{
 		eraseMainScreen();
 		xSemaphoreGive(I2CSem);
@@ -1449,6 +1468,8 @@ void displayTimeSequence(int cuantos)
 
 void openingToOpened()
 {
+	u32 started;
+
 	if( xTimerIsTimerActive( openTimer ) != pdFALSE )
 		xTimerStop(openTimer,0);
 	//	if( xTimerIsTimerActive( dispTimer ) != pdFALSE )
@@ -1458,15 +1479,17 @@ void openingToOpened()
 
 	stateVM=OPENED;
 	sendState();
-	if(oBHandle)
-	{
-		vTaskDelete(oBHandle);
-		oBHandle=NULL;
-	}
 
 //	if(aqui.waitBreak && gGuard)
 		if(gGuard)
 	{
+			if(oBHandle)
+			{
+				vTaskDelete(oBHandle);
+				oBHandle=NULL;
+			}
+
+
 		if(aqui.traceflag & (1<<DOORD))
 			printf("[DOORD]Set opened and break\n");
 			if( xTimerIsTimerActive( openTimer ) != pdFALSE )
@@ -1483,6 +1506,17 @@ void openingToOpened()
 			}
 				guardfopen=false;
 				displayTimeSequence(aqui.wait/2);
+				started=millis();
+
+				while(1) //Need to see the laser first
+				{
+					if(millis()-started>aqui.sleepTime)
+						break; //too long. something is wrong
+					if(!gpio_get_level(LASERSW))
+						delay(100);
+					else
+						break;
+				}
 				if(!gpio_get_level(OPENSW)) //Not already closing
 					relay(stateVM);
 			}
@@ -1527,6 +1561,7 @@ void openedToClosing()
 		if(aqui.traceflag & (1<<DOORD))
 			printf("[DOORD]Opened to Closing\n");
 		gpio_set_level(LASER, LASERON);
+
 		lastGRelay=0;
 //		xSemaphoreTake(args[2].mimutex,100); // used to clear a prevoius Action. Sort of debouncing
 		xTaskCreate(&gClosingBreak,"cbreak",4096,&args[2],MGOS_TASK_PRIORITY, &cBHandle); //Close Break manager
@@ -1535,6 +1570,8 @@ void openedToClosing()
 
 void closingToOpened()
 {
+	u32 started;
+
 	if(xSemaphoreTake(I2CSem, portMAX_DELAY))
 	{
 		drawString(GUARDX,GUARDY, "   ", 10, TEXT_ALIGN_LEFT,DISPLAYIT, REPLACE);
@@ -1546,13 +1583,28 @@ void closingToOpened()
 	{
 		if( xTimerIsTimerActive( openTimer ) != pdFALSE )
 			xTimerStop(openTimer,0);
-printf("ClosingOpened done\n");
+
+			printf("ClosingOpened done\n");
+
 		stateVM=OPENED;
 		sendState();
 		displayTimeSequence(aqui.wait/1000);
 		if(!gpio_get_level(args->pin)) //Not already closing
 		{
 			printf("closingto opened\n");
+			started=millis();
+			if(gGuard)
+			{
+				while(1) //Need to see the laser first
+				{
+					if(millis()-started>aqui.sleepTime)
+						break; //too long. something is wrong
+					if(!gpio_get_level(LASERSW))
+						delay(100);
+					else
+						break;
+				}
+			}
 			relay(stateVM);
 		}
 	}
@@ -1711,6 +1763,72 @@ void heapWD(void *pArg)
 		}
 	}
 }
+void guardTask(void *pArg)
+{
+	int nada;
+
+	while(true)
+	{
+		delay(aqui.sleepTime); //check every X time
+		if(aqui.guardOn)
+		//check On-Off Y times
+		if(stateVM==CLOSED)
+		{
+				// On Cycle
+
+				if(stateVM!=CLOSED)
+				{
+					goto exit; //while testing door changed state. Skip this test
+				}
+
+				gpio_set_level(LASER, LASERON); //Turn On Laser and test LASERSW. Must be ON
+				delay(500);
+				if(!getGPIO(LASERSW))
+					//Can not detect ON state. Guard fault;
+				{
+					gpio_set_level(LASER, LASEROFF); //Turn Off Laser and test LASERSW. Must be ON
+					if(aqui.traceflag & (1<<GUARDD))
+						printf("[GUARDD]Guard On Failure\n");
+					gGuard=false;
+					goto exit;
+				}
+				else
+					if(!gGuard) //was off
+					{
+						gGuard=true; //if off, now reactivated
+						if(aqui.traceflag & (1<<GUARDD))
+							printf("[GUARDD]Guard On Reactivated\n");
+					}
+
+				//Off cycle
+				gpio_set_level(LASER, LASEROFF); //Turn Off Laser and test LASERSW. Must be ON
+				delay(100);
+				if(stateVM!=CLOSED)
+				{
+					goto exit; //while testing door changed state. Skip this test
+				}
+
+				gpio_set_level(LASER, LASEROFF); //Turn Off Laser and test LASERSW. Must be ON
+				if(getGPIO(LASERSW))
+					//Can not detect Off state. Guard fault;
+				{
+					if(aqui.traceflag & (1<<GUARDD))
+						printf("[GUARDD]Guard Off Failure\n");
+					gGuard=false;
+					goto exit;
+				}
+				else
+					if(!gGuard)
+					{
+						if(aqui.traceflag & (1<<CMDD))
+							printf("[CMDD]Guard Off Reactivated \n");
+						gGuard=true; //reactivated
+					}
+			}
+		exit:
+		nada=0;
+	}
+}
 
 void app_main(void)
 {
@@ -1746,6 +1864,8 @@ void app_main(void)
 		erase_config();
 	}
 
+
+
 	curSSID=aqui.lastSSID;
 	initVars(); 			// used like this instead of var init to be able to have independent file per routine(s)
 	initI2C();  			// for Screen
@@ -1770,6 +1890,7 @@ void app_main(void)
 	xTaskCreate(&doorLedTask,"ledmgr",1024,NULL, MGOS_TASK_PRIORITY, NULL);
 	xTaskCreate(&wakeUp,"waker",1024,NULL, MGOS_TASK_PRIORITY, NULL);
 	xTaskCreate(&heapWD,"heapWD",1024,NULL, MGOS_TASK_PRIORITY, NULL);
+	xTaskCreate(&guardTask,"guardT",2048,NULL, MGOS_TASK_PRIORITY, NULL);
 
 	xTimerStart(dispTimer,0);
 }

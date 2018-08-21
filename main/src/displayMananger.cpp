@@ -156,7 +156,12 @@ void timerManager(void *arg) {
 				drawString(16, 5, mqttf?string("m"):string("   "), 10, TEXT_ALIGN_LEFT,NODISPLAY, REPLACE);
 				drawString(0, 51, string(textd), 10, TEXT_ALIGN_LEFT,DISPLAYIT, REPLACE);
 				drawString(86, 51, string(textt), 10, TEXT_ALIGN_LEFT,DISPLAYIT, REPLACE);
-				drawString(61, 51, aqui.working?"On  ":"Off", 10, TEXT_ALIGN_LEFT,DISPLAYIT, REPLACE);
+				sprintf(textt,"%s",aqui.working?"On":"Off");
+				if(gGuard)
+					strncat(textt,"G ",2);
+				else
+					strncat(textt,"   ",3);
+				drawString(61, 51, textt, 10, TEXT_ALIGN_LEFT,DISPLAYIT, REPLACE);
 				xSemaphoreGive(I2CSem);
 			}
 		}
